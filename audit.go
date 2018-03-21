@@ -55,7 +55,7 @@ func loadConfig(configFile string) (*viper.Viper, error) {
 func setRules(config *viper.Viper, e executor) error {
 	// Clear existing rules
 	if err := e("auditctl", "-D"); err != nil {
-		return errors.New(fmt.Sprintf("Failed to flush existing audit rules. Error: %s", err))
+		return fmt.Errorf("Failed to flush existing audit rules. Error: %s", err)
 	}
 
 	l.Println("Flushed existing audit rules")
@@ -69,13 +69,13 @@ func setRules(config *viper.Viper, e executor) error {
 			}
 
 			if err := e("auditctl", strings.Fields(v)...); err != nil {
-				return errors.New(fmt.Sprintf("Failed to add rule #%d. Error: %s", i+1, err))
+				return fmt.Errorf("Failed to add rule #%d. Error: %s", i+1, err)
 			}
 
 			l.Printf("Added audit rule #%d\n", i+1)
 		}
 	} else {
-		return errors.New("No audit rules found.")
+		return errors.New("No audit rules found")
 	}
 
 	return nil
@@ -126,9 +126,7 @@ func createOutput(config *viper.Viper) (*AuditWriter, error) {
 func createSyslogOutput(config *viper.Viper) (*AuditWriter, error) {
 	attempts := config.GetInt("output.syslog.attempts")
 	if attempts < 1 {
-		return nil, errors.New(
-			fmt.Sprintf("Output attempts for syslog must be at least 1, %v provided", attempts),
-		)
+		return nil, fmt.Errorf("Output attempts for syslog must be at least 1, %v provided", attempts)
 	}
 
 	syslogWriter, err := syslog.Dial(
@@ -139,7 +137,7 @@ func createSyslogOutput(config *viper.Viper) (*AuditWriter, error) {
 	)
 
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Failed to open syslog writer. Error: %v", err))
+		return nil, fmt.Errorf("Failed to open syslog writer. Error: %v", err)
 	}
 
 	return NewAuditWriter(syslogWriter, attempts), nil
@@ -148,9 +146,7 @@ func createSyslogOutput(config *viper.Viper) (*AuditWriter, error) {
 func createFileOutput(config *viper.Viper) (*AuditWriter, error) {
 	attempts := config.GetInt("output.file.attempts")
 	if attempts < 1 {
-		return nil, errors.New(
-			fmt.Sprintf("Output attempts for file must be at least 1, %v provided", attempts),
-		)
+		return nil, fmt.Errorf("Output attempts for file must be at least 1, %v provided", attempts)
 	}
 
 	mode := os.FileMode(config.GetInt("output.file.mode"))
@@ -164,37 +160,37 @@ func createFileOutput(config *viper.Viper) (*AuditWriter, error) {
 	)
 
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Failed to open output file. Error: %s", err))
+		return nil, fmt.Errorf("Failed to open output file. Error: %s", err)
 	}
 
 	if err := f.Chmod(mode); err != nil {
-		return nil, errors.New(fmt.Sprintf("Failed to set file permissions. Error: %s", err))
+		return nil, fmt.Errorf("Failed to set file permissions. Error: %s", err)
 	}
 
 	uname := config.GetString("output.file.user")
 	u, err := user.Lookup(uname)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Could not find uid for user %s. Error: %s", uname, err))
+		return nil, fmt.Errorf("Could not find uid for user %s. Error: %s", uname, err)
 	}
 
 	gname := config.GetString("output.file.group")
 	g, err := user.LookupGroup(gname)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Could not find gid for group %s. Error: %s", gname, err))
+		return nil, fmt.Errorf("Could not find gid for group %s. Error: %s", gname, err)
 	}
 
 	uid, err := strconv.ParseInt(u.Uid, 10, 32)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Found uid could not be parsed. Error: %s", err))
+		return nil, fmt.Errorf("Found uid could not be parsed. Error: %s", err)
 	}
 
 	gid, err := strconv.ParseInt(g.Gid, 10, 32)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Found gid could not be parsed. Error: %s", err))
+		return nil, fmt.Errorf("Found gid could not be parsed. Error: %s", err)
 	}
 
 	if err = f.Chown(int(uid), int(gid)); err != nil {
-		return nil, errors.New(fmt.Sprintf("Could not chown output file. Error: %s", err))
+		return nil, fmt.Errorf("Could not chown output file. Error: %s", err)
 	}
 
 	return NewAuditWriter(f, attempts), nil
@@ -206,7 +202,7 @@ func handleLogRotation(config *viper.Viper, writer *AuditWriter) {
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGUSR1)
 
-	for _ = range sigc {
+	for range sigc {
 		newWriter, err := createFileOutput(config)
 		if err != nil {
 			el.Fatalln("Error re-opening log file. Exiting.")
@@ -226,9 +222,7 @@ func handleLogRotation(config *viper.Viper, writer *AuditWriter) {
 func createStdOutOutput(config *viper.Viper) (*AuditWriter, error) {
 	attempts := config.GetInt("output.stdout.attempts")
 	if attempts < 1 {
-		return nil, errors.New(
-			fmt.Sprintf("Output attempts for stdout must be at least 1, %v provided", attempts),
-		)
+		return nil, fmt.Errorf("Output attempts for stdout must be at least 1, %v provided", attempts)
 	}
 
 	// l logger is no longer stdout
@@ -237,7 +231,7 @@ func createStdOutOutput(config *viper.Viper) (*AuditWriter, error) {
 	return NewAuditWriter(os.Stdout, attempts), nil
 }
 
-func createFilters(config *viper.Viper) []AuditFilter {
+func createFilters(config *viper.Viper) ([]AuditFilter, error) {
 	var err error
 	var ok bool
 
@@ -245,18 +239,18 @@ func createFilters(config *viper.Viper) []AuditFilter {
 	filters := []AuditFilter{}
 
 	if fs == nil {
-		return filters
+		return filters, nil
 	}
 
 	ft, ok := fs.([]interface{})
 	if !ok {
-		return filters
+		return filters, fmt.Errorf("Could not parse filters object")
 	}
 
 	for i, f := range ft {
 		f2, ok := f.(map[interface{}]interface{})
 		if !ok {
-			el.Fatal("Could not parse filter ", i+1, f)
+			return filters, fmt.Errorf("Could not parse filter %d; '%+v'", i+1, f)
 		}
 
 		af := AuditFilter{}
@@ -266,28 +260,25 @@ func createFilters(config *viper.Viper) []AuditFilter {
 				if ev, ok := v.(string); ok {
 					fv, err := strconv.ParseUint(ev, 10, 64)
 					if err != nil {
-						el.Fatal("`message_type` in filter ", i+1, " could not be parsed ", v, " ", err)
+						return filters, fmt.Errorf("`message_type` in filter %d could not be parsed; Value: `%+v`; Error: %s", i+1, v, err)
 					}
 					af.messageType = uint16(fv)
 
 				} else if ev, ok := v.(int); ok {
-					if !ok {
-						el.Fatal("`message_type` in filter ", i+1, " could not be parsed ", v)
-					}
 					af.messageType = uint16(ev)
 
 				} else {
-					el.Fatal("`message_type` in filter ", i+1, " could not be parsed ", v)
+					return filters, fmt.Errorf("`message_type` in filter %d could not be parsed; Value: `%+v`", i+1, v)
 				}
 
 			case "regex":
 				re, ok := v.(string)
 				if !ok {
-					el.Fatal("`regex` in filter ", i+1, " could not be parsed ", v)
+					return filters, fmt.Errorf("`regex` in filter %d could not be parsed; Value: `%+v`", i+1, v)
 				}
 
 				if af.regex, err = regexp.Compile(re); err != nil {
-					el.Fatal("`regex` in filter ", i+1, " could not be parsed ", v, " ", err)
+					return filters, fmt.Errorf("`regex` in filter %d could not be parsed; Value: `%+v`; Error: %s", i+1, v, err)
 				}
 
 			case "syscall":
@@ -296,16 +287,28 @@ func createFilters(config *viper.Viper) []AuditFilter {
 				} else if ev, ok := v.(int); ok {
 					af.syscall = strconv.Itoa(ev)
 				} else {
-					el.Fatal("`syscall` in filter ", i+1, " could not be parsed ", v)
+					return filters, fmt.Errorf("`syscall` in filter %d could not be parsed; Value: `%+v`", i+1, v)
 				}
 			}
 		}
 
+		if af.regex == nil {
+			return filters, fmt.Errorf("Filter %d is missing the `regex` entry", i+1)
+		}
+
+		if af.syscall == "" {
+			return filters, fmt.Errorf("Filter %d is missing the `syscall` entry", i+1)
+		}
+
+		if af.messageType == 0 {
+			return filters, fmt.Errorf("Filter %d is missing the `message_type` entry", i+1)
+		}
+
 		filters = append(filters, af)
-		l.Printf("Ignoring  syscall `%v` containing message type `%v` matching string `%s`\n", af.syscall, af.messageType, af.regex.String())
+		l.Printf("Ignoring syscall `%v` containing message type `%v` matching string `%s`\n", af.syscall, af.messageType, af.regex.String())
 	}
 
-	return filters
+	return filters, nil
 }
 
 func main() {
@@ -334,7 +337,16 @@ func main() {
 		el.Fatal(err)
 	}
 
-	nlClient := NewNetlinkClient(config.GetInt("socket_buffer.receive"))
+	filters, err := createFilters(config)
+	if err != nil {
+		el.Fatal(err)
+	}
+
+	nlClient, err := NewNetlinkClient(config.GetInt("socket_buffer.receive"))
+	if err != nil {
+		el.Fatal(err)
+	}
+
 	marshaller := NewAuditMarshaller(
 		writer,
 		uint16(config.GetInt("events.min")),
@@ -342,7 +354,7 @@ func main() {
 		config.GetBool("message_tracking.enabled"),
 		config.GetBool("message_tracking.log_out_of_order"),
 		config.GetInt("message_tracking.max_out_of_order"),
-		createFilters(config),
+		filters,
 	)
 
 	l.Printf("Started processing events in the range [%d, %d]\n", config.GetInt("events.min"), config.GetInt("events.max"))
